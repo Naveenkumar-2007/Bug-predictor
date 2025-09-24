@@ -8,4 +8,12 @@ matplotlib
 firebase-admin
 pyrebase4
 bcrypt
-
+reportlab
+plotly
+seaborn
+openpyxl
+lxml
+urllib3
+certifi
+charset-normalizer
+idna
