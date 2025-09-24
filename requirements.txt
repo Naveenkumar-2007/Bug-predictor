@@ -3,3 +3,9 @@ requests
 beautifulsoup4
 scikit-learn
 pandas
+numpy<2
+matplotlib
+firebase-admin
+pyrebase4
+bcrypt
+
