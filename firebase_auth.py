@@ -3,13 +3,26 @@ Firebase Authentication Module for Bug Predictor App
 Handles user registration, login, logout, and session management
 """
 
-import pyrebase
+try:
+    import pyrebase
+    import firebase_admin
+    from firebase_admin import credentials, auth as admin_auth
+    FIREBASE_AVAILABLE = True
+except ImportError as e:
+    print(f"Firebase modules not available: {e}")
+    FIREBASE_AVAILABLE = False
+    # Create dummy classes to prevent import errors
+    class pyrebase:
+        @staticmethod
+        def initialize_app(config):
+            return None
+    class firebase_admin:
+        _apps = []
+
 import streamlit as st
 from typing import Dict, Optional, Tuple
 import json
 import os
-import firebase_admin
-from firebase_admin import credentials, auth as admin_auth
 
 class FirebaseAuth:
     def __init__(self, config: Dict[str, str]):
@@ -24,6 +37,10 @@ class FirebaseAuth:
                 - databaseURL: Firebase Realtime Database URL (optional)
                 - storageBucket: Firebase Storage Bucket (optional)
         """
+        if not FIREBASE_AVAILABLE:
+            st.session_state.firebase_initialized = False
+            return
+            
         self.firebase_config = {
             "apiKey": config.get("apiKey", ""),
             "authDomain": config.get("authDomain", ""),
@@ -66,6 +83,9 @@ class FirebaseAuth:
         Returns:
             Tuple of (success: bool, message: str)
         """
+        if not FIREBASE_AVAILABLE:
+            return False, "Firebase not available, please use simple authentication"
+            
         try:
             # Create user account
             user = self.auth.create_user_with_email_and_password(email, password)
@@ -97,6 +117,9 @@ class FirebaseAuth:
         Returns:
             Tuple of (success: bool, message: str)
         """
+        if not FIREBASE_AVAILABLE:
+            return False, "Firebase not available, please use simple authentication"
+            
         try:
             # Sign in user
             user = self.auth.sign_in_with_email_and_password(email, password)
