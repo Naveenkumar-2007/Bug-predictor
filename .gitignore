@@ -192,3 +192,20 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Firebase credentials - DO NOT COMMIT TO PUBLIC REPO
+firebase_service_account.json
+*.json
+firebase_config.py
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# User data files
+users.json
+
+# Environment variables
+.env
+.env.local
