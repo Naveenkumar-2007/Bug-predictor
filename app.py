@@ -13,12 +13,18 @@ try:
     from login_page import show_login_page, show_user_profile
     USE_FIREBASE = True
 except Exception as e:
-    from simple_auth import initialize_simple_auth
     USE_FIREBASE = False
     st.error(f"Firebase not available, using simple auth: {e}")
 
+# Import simple auth regardless (needed for fallback)
+try:
+    from simple_auth import initialize_simple_auth
+except ImportError:
+    st.error("Simple auth module not found. Please check your setup.")
+    st.stop()
+
 # --- Streamlit UI ---
-st.set_page_config(page_title="Killer Bug Predictor Pro", layout="wide")
+st.set_page_config(page_title="Killer Bug Predictor", layout="wide")
 
 # Initialize Auth
 if 'auth_system' not in st.session_state:
@@ -40,7 +46,7 @@ if not auth or not auth.is_authenticated():
         show_login_page()
     else:
         # Simple login page
-        st.markdown('<h1 style="text-align: center; color: #1f77b4;">💀 Killer Bug Predictor Pro</h1>', unsafe_allow_html=True)
+        st.markdown('<h1 style="text-align: center; color: #1f77b4;">💀 Killer Bug Predictor</h1>', unsafe_allow_html=True)
         st.markdown('<p style="text-align: center; color: #666; font-size: 1.2rem;">AI-Powered Website Analysis & Bug Detection</p>', unsafe_allow_html=True)
         
         col1, col2, col3 = st.columns([1, 2, 1])
@@ -93,23 +99,60 @@ else:
             auth.sign_out()
             st.rerun()
 
-# Welcome message for authenticated user
-st.title(f"🕵️ Welcome back, {user_info['name']}!")
-st.write("🎯 **Real-time Website Bug Prediction** - Your personalized dashboard")
+# Simple welcome message
+st.title(f"� Welcome back, {user_info['name']}!")
+st.write("🎯 **Killer Bug Predictor** - Your personalized dashboard")
 st.write("Enter a website URL and get real-time bug analysis with ML + heuristics.")
 
 # Input box
-url = st.text_input("Enter Website URL", "https://example.com")
+url = st.text_input("Enter Website URL", placeholder="https://example.com")
 
 # Auto-refresh option
 refresh = st.checkbox("Auto-refresh every 60s")
 
 if st.button("Analyze Website") or refresh:
-    with st.spinner("Analyzing website..."):
+    # Enhanced URL validation
+    if not url.strip():
+        st.error("❌ Please enter a website URL")
+        st.stop()
+    
+    # Check for proper URL format
+    from urllib.parse import urlparse
+    
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            st.error("❌ Please enter a valid URL format (e.g., https://google.com)")
+            st.stop()
+        
+        if parsed.scheme not in ['http', 'https']:
+            st.error("❌ URL must start with http:// or https://")
+            st.stop()
+            
+        # Check for incomplete URLs like "https://.."
+        if parsed.netloc in ['.', '..', '...'] or len(parsed.netloc.strip('.')) < 3:
+            st.error("❌ Please enter a complete website URL (e.g., https://google.com)")
+            st.stop()
+            
+    except Exception:
+        st.error("❌ Invalid URL format. Please enter a correct URL (e.g., https://google.com)")
+        st.stop()
+    
+    with st.spinner("🔍 Analyzing website security..."):
         results = analyze_website(url)
 
     # Convert results to DataFrame
     df = pd.DataFrame(results, columns=["Category", "Message", "Severity"])
+    
+    # Check for analysis errors first
+    error_messages = df[df["Severity"] == "Error"]
+    if len(error_messages) > 0:
+        st.error(f"❌ {error_messages.iloc[0]['Message']}")
+        st.info("💡 **Tip:** Make sure the URL is correct and the website is accessible.")
+        st.stop()
+    
+    # Check if there are any actual security vulnerabilities (exclude "Error", "Clean", "Safe")
+    actual_bugs = df[~df["Severity"].isin(["Error", "Clean", "Safe", "Info"])]
 
     # --- Color severity ---
     def highlight_severity(val):
@@ -123,287 +166,326 @@ if st.button("Analyze Website") or refresh:
         return colors.get(val, "")
 
     st.subheader("🔎 Bug Report")
-    st.dataframe(df.style.map(highlight_severity, subset=["Severity"]))
-
-    # --- CSV Export ---
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("📥 Download Report (CSV)", csv, "bug_report.csv", "text/csv")
-
-    # --- Enhanced Severity Chart ---
-    severity_counts = df["Severity"].value_counts()
-    st.subheader("📊 Bug Severity Distribution")
     
-    # Create two columns for better layout
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        # Enhanced Pie Chart
-        fig, ax = plt.subplots(figsize=(8, 6))
+    # Show results based on what was found
+    if len(actual_bugs) == 0:
+        st.success("✅ No security vulnerabilities detected!")
+        st.info("This website appears to be secure based on our analysis.")
+        # Don't show any charts or health analysis for clean websites
+    else:
+        st.dataframe(actual_bugs.style.map(highlight_severity, subset=["Severity"]))
         
-        # Define colors for each severity level
-        severity_colors = {
-            "Critical": "#8B0000",  # Dark Red
-            "High": "#FF4444",      # Red
-            "Medium": "#FF8C00",    # Orange
-            "Low": "#FFD700",       # Gold
-            "Safe": "#32CD32"       # Green
-        }
-        
-        colors = [severity_colors.get(sev, "#808080") for sev in severity_counts.index]
-        
-        # Create the pie chart with better styling
-        wedges, texts, autotexts = ax.pie(
-            severity_counts.values,
-            labels=severity_counts.index,
-            colors=colors,
-            autopct=lambda pct: f'{pct:.1f}%\n({int(pct/100*severity_counts.sum())} bugs)',
-            startangle=90,
-            explode=[0.05 if sev == "High" else 0 for sev in severity_counts.index],  # Explode high severity
-            shadow=True,
-            textprops={'fontsize': 10, 'weight': 'bold'}
-        )
-        
-        # Enhance text appearance
-        for autotext in autotexts:
-            autotext.set_color('white')
-            autotext.set_weight('bold')
+        # --- CSV Export (only if bugs found) ---
+        csv = actual_bugs.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Download Report (CSV)", csv, "bug_report.csv", "text/csv")
+
+        # --- Enhanced Severity Chart (only show if bugs found) ---
+        if len(actual_bugs) > 0:
+            severity_counts = actual_bugs["Severity"].value_counts()
+            st.subheader("📊 Bug Severity Distribution")
             
-        ax.set_title("Bug Severity Breakdown", fontsize=14, fontweight='bold', pad=20)
-        plt.tight_layout()
-        st.pyplot(fig)
-    
-    with col2:
-        # Severity Summary Stats
-        st.markdown("### 📋 Summary")
-        total_bugs = len(df)
-        st.metric("Total Issues Found", total_bugs)
-        
-        for severity in ["Critical", "High", "Medium", "Low", "Safe"]:
-            count = severity_counts.get(severity, 0)
-            if count > 0:
-                percentage = (count / total_bugs) * 100
-                emoji = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢", "Safe": "✅"}.get(severity, "⚪")
-                st.metric(f"{emoji} {severity}", f"{count} ({percentage:.1f}%)")
-    
-    # --- Bar Chart Alternative ---
-    st.markdown("### 📊 Detailed Breakdown")
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    bars = ax.bar(severity_counts.index, severity_counts.values, 
-                  color=[severity_colors.get(sev, "#808080") for sev in severity_counts.index],
-                  edgecolor='black', linewidth=1, alpha=0.8)
-    
-    # Add value labels on bars
-    for bar in bars:
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
-                f'{int(height)}', ha='center', va='bottom', fontweight='bold')
-    
-    ax.set_xlabel('Severity Level', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Number of Issues', fontsize=12, fontweight='bold')
-    ax.set_title('Bug Count by Severity Level', fontsize=14, fontweight='bold')
-    ax.grid(True, alpha=0.3, axis='y')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    st.pyplot(fig)
-
-    # --- Enhanced Health Score Display ---
-    score = 100
-    penalty = {"High": 20, "Medium": 10, "Low": 5}
-    for _, row in df.iterrows():
-        score -= penalty.get(row["Severity"], 0)
-    score = max(score, 0)
-    
-    # Create a more visual health score display
-    st.subheader("💡 Website Health Analysis")
-    
-    # Health score with gauge-like visualization
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col1:
-        # Health score metric
-        score_color = "🟢" if score >= 80 else "🟡" if score >= 60 else "🟠" if score >= 40 else "🔴"
-        st.metric("Health Score", f"{score_color} {score}/100")
-        
-        # Score interpretation
-        if score >= 80:
-            st.success("🎉 Excellent! Your website is in great shape!")
-        elif score >= 60:
-            st.info("� Good! Minor improvements needed.")
-        elif score >= 40:
-            st.warning("⚠️ Fair. Several issues need attention.")
-        else:
-            st.error("🚨 Poor. Critical issues require immediate action!")
-    
-    with col2:
-        # Create a visual health gauge
-        fig, ax = plt.subplots(figsize=(8, 4), subplot_kw=dict(projection='polar'))
-        
-        # Create gauge
-        theta = np.linspace(0, np.pi, 100)
-        
-        # Background sectors
-        ax.fill_between(theta[0:25], 0, 1, alpha=0.3, color='red', label='Poor (0-40)')
-        ax.fill_between(theta[25:50], 0, 1, alpha=0.3, color='orange', label='Fair (40-60)')
-        ax.fill_between(theta[50:75], 0, 1, alpha=0.3, color='gold', label='Good (60-80)')
-        ax.fill_between(theta[75:100], 0, 1, alpha=0.3, color='green', label='Excellent (80-100)')
-        
-        # Score pointer
-        score_angle = np.pi * (score / 100)
-        ax.plot([score_angle, score_angle], [0, 0.8], color='black', linewidth=4)
-        ax.plot(score_angle, 0.8, 'ko', markersize=8)
-        
-        ax.set_ylim(0, 1)
-        ax.set_theta_zero_location('W')
-        ax.set_theta_direction(1)
-        ax.set_thetagrids([0, 45, 90, 135, 180], ['100', '75', '50', '25', '0'])
-        ax.set_title(f'Health Score: {score}/100', pad=20, fontsize=14, fontweight='bold')
-        ax.set_rticks([])  # Remove radial ticks
-        
-        plt.tight_layout()
-        st.pyplot(fig)
-    
-    with col3:
-        # Score breakdown
-        st.markdown("#### 📊 Score Impact")
-        total_penalty = 100 - score
-        if total_penalty > 0:
-            high_penalty = (df["Severity"] == "High").sum() * 20
-            medium_penalty = (df["Severity"] == "Medium").sum() * 10
-            low_penalty = (df["Severity"] == "Low").sum() * 5
+            # Create two columns for better layout
+            col1, col2 = st.columns([2, 1])
             
-            st.write(f"🔴 High: -{high_penalty} pts")
-            st.write(f"🟠 Medium: -{medium_penalty} pts")
-            st.write(f"🟡 Low: -{low_penalty} pts")
-            st.write(f"**Total: -{total_penalty} pts**")
-        else:
-            st.write("✅ No penalties!")
-
-    # --- Bug Category Breakdown ---
-    if len(df) > 0:
-        st.subheader("🔍 Bug Categories Analysis")
-        
-        category_counts = df["Category"].value_counts()
-        
-        # Create columns for category visualization
-        cat_col1, cat_col2 = st.columns([2, 1])
-        
-        with cat_col1:
-            # Horizontal bar chart for categories
+            with col1:
+                # Enhanced Pie Chart
+                fig, ax = plt.subplots(figsize=(8, 6))
+                
+                # Define colors for each severity level
+                severity_colors = {
+                    "Critical": "#8B0000",  # Dark Red
+                    "High": "#FF4444",      # Red
+                    "Medium": "#FF8C00",    # Orange
+                    "Low": "#FFD700",       # Gold
+                    "Safe": "#32CD32"       # Green
+                }
+                
+                colors = [severity_colors.get(sev, "#808080") for sev in severity_counts.index]
+                
+                # Create the pie chart with better styling
+                wedges, texts, autotexts = ax.pie(
+                    severity_counts.values,
+                    labels=severity_counts.index,
+                    colors=colors,
+                    autopct=lambda pct: f'{pct:.1f}%\n({int(pct/100*severity_counts.sum())} bugs)',
+                    startangle=90,
+                    explode=[0.05 if sev == "High" else 0 for sev in severity_counts.index],  # Explode high severity
+                    shadow=True,
+                    textprops={'fontsize': 10, 'weight': 'bold'}
+                )
+                
+                # Enhance text appearance
+                for autotext in autotexts:
+                    autotext.set_color('white')
+                    autotext.set_weight('bold')
+                    
+                ax.set_title("Bug Severity Breakdown", fontsize=14, fontweight='bold', pad=20)
+                plt.tight_layout()
+                st.pyplot(fig)
+            
+            with col2:
+                # Severity Summary Stats
+                st.markdown("### 📋 Summary")
+                total_bugs = len(actual_bugs)
+                st.metric("Total Issues Found", total_bugs)
+                
+                for severity in ["Critical", "High", "Medium", "Low"]:
+                    count = severity_counts.get(severity, 0)
+                    if count > 0:
+                        percentage = (count / total_bugs) * 100
+                        emoji = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}.get(severity, "⚪")
+                        st.metric(f"{emoji} {severity}", f"{count} ({percentage:.1f}%)")
+            
+            # --- Bar Chart Alternative ---
+            st.markdown("### 📊 Detailed Breakdown")
             fig, ax = plt.subplots(figsize=(10, 6))
             
-            category_colors = {
-                "Security": "#dc3545",
-                "Performance": "#fd7e14", 
-                "Accessibility": "#6f42c1",
-                "SEO": "#20c997",
-                "Code Quality": "#6c757d",
-                "Link": "#0d6efd",
-                "Form": "#ffc107",
-                "Mobile": "#e83e8c",
-                "Page Error": "#495057",
-                "System": "#343a40",
-                "Info": "#28a745",
-                "ML Analysis": "#17a2b8",
-                "Text Analysis": "#868e96"
-            }
+            bars = ax.bar(severity_counts.index, severity_counts.values, 
+                          color=[severity_colors.get(sev, "#808080") for sev in severity_counts.index],
+                          edgecolor='black', linewidth=1, alpha=0.8)
             
-            colors = [category_colors.get(cat, "#6c757d") for cat in category_counts.index]
-            
-            bars = ax.barh(category_counts.index, category_counts.values, color=colors, alpha=0.8)
-            
-            # Add value labels
+            # Add value labels on bars
             for bar in bars:
-                width = bar.get_width()
-                ax.text(width + 0.1, bar.get_y() + bar.get_height()/2,
-                       f'{int(width)}', ha='left', va='center', fontweight='bold')
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                        f'{int(height)}', ha='center', va='bottom', fontweight='bold')
             
-            ax.set_xlabel('Number of Issues', fontsize=12, fontweight='bold')
-            ax.set_title('Issues by Category', fontsize=14, fontweight='bold')
-            ax.grid(True, alpha=0.3, axis='x')
-            
+            ax.set_xlabel('Severity Level', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Number of Issues', fontsize=12, fontweight='bold')
+            ax.set_title('Bug Count by Severity Level', fontsize=14, fontweight='bold')
+            ax.grid(True, alpha=0.3, axis='y')
+            plt.xticks(rotation=45)
             plt.tight_layout()
             st.pyplot(fig)
-        
-        with cat_col2:
-            # Category summary with emojis
-            st.markdown("#### 📋 Category Summary")
-            
-            category_emojis = {
-                "Security": "🔒",
-                "Performance": "⚡",
-                "Accessibility": "♿",
-                "SEO": "📈", 
-                "Code Quality": "🔧",
-                "Link": "🔗",
-                "Form": "📝",
-                "Mobile": "📱",
-                "Page Error": "❌",
-                "System": "⚙️",
-                "Info": "ℹ️",
-                "ML Analysis": "🤖",
-                "Text Analysis": "📄"
-            }
-            
-            for category, count in category_counts.items():
-                emoji = category_emojis.get(category, "⚪")
-                percentage = (count / len(df)) * 100
-                st.write(f"{emoji} **{category}**: {count} ({percentage:.1f}%)")
-        
-        # Priority recommendations
-        st.subheader("🎯 Priority Recommendations")
-        
-        high_severity = df[df["Severity"] == "High"]
-        medium_severity = df[df["Severity"] == "Medium"]
-        
-        if len(high_severity) > 0:
-            st.error("🚨 **Immediate Action Required:**")
-            for _, bug in high_severity.head(3).iterrows():  # Show top 3 high severity
-                st.write(f"• **{bug['Category']}**: {bug['Message']}")
-        
-        if len(medium_severity) > 0:
-            st.warning("⚠️ **Should Address Soon:**")
-            for _, bug in medium_severity.head(3).iterrows():  # Show top 3 medium severity
-                st.write(f"• **{bug['Category']}**: {bug['Message']}")
-        
-        if len(high_severity) == 0 and len(medium_severity) == 0:
-            st.success("🎉 **Great Job!** No critical issues found. Focus on minor improvements for optimal performance.")
 
-    # --- Bug Analysis Complete ---
+            # --- Enhanced Health Score Display ---
+            score = 100
+            penalty = {"High": 20, "Medium": 10, "Low": 5, "Critical": 30}
+            for _, row in actual_bugs.iterrows():
+                score -= penalty.get(row["Severity"], 0)
+            score = max(score, 0)
+            
+            # Create a more visual health score display
+            st.subheader("💡 Website Health Analysis")
+            
+            # Health score with gauge-like visualization
+            col1, col2, col3 = st.columns([1, 2, 1])
+            
+            with col1:
+                # Health score metric
+                score_color = "🟢" if score >= 80 else "🟡" if score >= 60 else "🟠" if score >= 40 else "🔴"
+                st.metric("Health Score", f"{score_color} {score}/100")
+                
+                # Score interpretation
+                if score >= 80:
+                    st.success("🎉 Excellent! Your website is in great shape!")
+                elif score >= 60:
+                    st.info("👍 Good! Minor improvements needed.")
+                elif score >= 40:
+                    st.warning("⚠️ Fair. Several issues need attention.")
+                else:
+                    st.error("🚨 Poor. Critical issues require immediate action!")
+            
+            with col2:
+                # Create a visual health gauge
+                fig, ax = plt.subplots(figsize=(8, 4), subplot_kw=dict(projection='polar'))
+                
+                # Create gauge
+                theta = np.linspace(0, np.pi, 100)
+                
+                # Background sectors
+                ax.fill_between(theta[0:25], 0, 1, alpha=0.3, color='red', label='Poor (0-40)')
+                ax.fill_between(theta[25:50], 0, 1, alpha=0.3, color='orange', label='Fair (40-60)')
+                ax.fill_between(theta[50:75], 0, 1, alpha=0.3, color='gold', label='Good (60-80)')
+                ax.fill_between(theta[75:100], 0, 1, alpha=0.3, color='green', label='Excellent (80-100)')
+                
+                # Score pointer
+                score_angle = np.pi * (score / 100)
+                ax.plot([score_angle, score_angle], [0, 0.8], color='black', linewidth=4)
+                ax.plot(score_angle, 0.8, 'ko', markersize=8)
+                
+                ax.set_ylim(0, 1)
+                ax.set_theta_zero_location('W')
+                ax.set_theta_direction(1)
+                ax.set_thetagrids([0, 45, 90, 135, 180], ['100', '75', '50', '25', '0'])
+                ax.set_title(f'Health Score: {score}/100', pad=20, fontsize=14, fontweight='bold')
+                ax.set_rticks([])  # Remove radial ticks
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+            
+            with col3:
+                # Score breakdown
+                st.markdown("#### 📊 Score Impact")
+                total_penalty = 100 - score
+                if total_penalty > 0:
+                    critical_penalty = (actual_bugs["Severity"] == "Critical").sum() * 30
+                    high_penalty = (actual_bugs["Severity"] == "High").sum() * 20
+                    medium_penalty = (actual_bugs["Severity"] == "Medium").sum() * 10
+                    low_penalty = (actual_bugs["Severity"] == "Low").sum() * 5
+                    
+                    if critical_penalty > 0:
+                        st.write(f"🔴 Critical: -{critical_penalty} pts")
+                    if high_penalty > 0:
+                        st.write(f"🔴 High: -{high_penalty} pts")
+                    if medium_penalty > 0:
+                        st.write(f"🟠 Medium: -{medium_penalty} pts")
+                    if low_penalty > 0:
+                        st.write(f"🟡 Low: -{low_penalty} pts")
+                    st.write(f"**Total: -{total_penalty} pts**")
+                else:
+                    st.write("✅ No penalties!")
+
+            # --- Bug Category Breakdown ---
+            st.subheader("🔍 Bug Categories Analysis")
+            
+            category_counts = actual_bugs["Category"].value_counts()
+            
+            # Create columns for category visualization
+            cat_col1, cat_col2 = st.columns([2, 1])
+            
+            with cat_col1:
+                # Horizontal bar chart for categories
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                category_colors = {
+                    "🚨 XSS VULNERABILITY": "#dc3545",
+                    "💉 SQL INJECTION": "#8B0000", 
+                    "🛡️ CSRF VULNERABILITY": "#6f42c1",
+                    "🎯 IDOR VULNERABILITY": "#20c997",
+                    "🌐 SSRF VULNERABILITY": "#6c757d",
+                    "📁 LFI/RFI VULNERABILITY": "#0d6efd",
+                    "🖼️ CLICKJACKING VULNERABILITY": "#ffc107",
+                    "📤 FILE UPLOAD VULNERABILITY": "#e83e8c",
+                    "⚡ OS COMMAND INJECTION": "#495057",
+                    "🔐 CRYPTOGRAPHY FAILURE": "#343a40",
+                    "Security": "#dc3545",
+                    "Performance": "#fd7e14", 
+                    "Accessibility": "#6f42c1",
+                    "SEO": "#20c997",
+                    "Code Quality": "#6c757d",
+                    "Link": "#0d6efd",
+                    "Form": "#ffc107",
+                    "Mobile": "#e83e8c"
+                }
+                
+                colors = [category_colors.get(cat, "#6c757d") for cat in category_counts.index]
+                
+                bars = ax.barh(category_counts.index, category_counts.values, color=colors, alpha=0.8)
+                
+                # Add value labels
+                for bar in bars:
+                    width = bar.get_width()
+                    ax.text(width + 0.1, bar.get_y() + bar.get_height()/2,
+                            f'{int(width)}', ha='left', va='center', fontweight='bold')
+                
+                ax.set_xlabel('Number of Issues', fontsize=12, fontweight='bold')
+                ax.set_title('Issues by Category', fontsize=14, fontweight='bold')
+                ax.grid(True, alpha=0.3, axis='x')
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+            
+            with cat_col2:
+                # Category summary with emojis
+                st.markdown("#### 📋 Category Summary")
+                
+                category_emojis = {
+                    "🚨 XSS VULNERABILITY": "🚨",
+                    "💉 SQL INJECTION": "💉", 
+                    "🛡️ CSRF VULNERABILITY": "🛡️",
+                    "🎯 IDOR VULNERABILITY": "🎯",
+                    "🌐 SSRF VULNERABILITY": "🌐",
+                    "📁 LFI/RFI VULNERABILITY": "📁",
+                    "🖼️ CLICKJACKING VULNERABILITY": "🖼️",
+                    "📤 FILE UPLOAD VULNERABILITY": "📤",
+                    "⚡ OS COMMAND INJECTION": "⚡",
+                    "🔐 CRYPTOGRAPHY FAILURE": "🔐",
+                    "Security": "🔒",
+                    "Performance": "⚡",
+                    "Accessibility": "♿",
+                    "SEO": "📈", 
+                    "Code Quality": "🔧",
+                    "Link": "🔗"
+                }
+                
+                for category, count in category_counts.items():
+                    emoji = category_emojis.get(category, "⚪")
+                    percentage = (count / len(actual_bugs)) * 100
+                    st.write(f"{emoji} **{category}**: {count} ({percentage:.1f}%)")
+            
+            # Show critical/high issues only if they exist
+            critical_issues = actual_bugs[actual_bugs["Severity"] == "Critical"]
+            high_severity = actual_bugs[actual_bugs["Severity"] == "High"]
+            
+            if len(critical_issues) > 0:
+                st.error("🚨 **Critical Security Issues:**")
+                for _, bug in critical_issues.head(3).iterrows():
+                    st.write(f"• **{bug['Category']}**: {bug['Message']}")
+            
+            if len(high_severity) > 0:
+                st.warning("⚠️ **High-Priority Issues:**")
+                for _, bug in high_severity.head(2).iterrows():
+                    st.write(f"• **{bug['Category']}**: {bug['Message']}")
+
+    # --- Analysis Complete ---
     st.subheader("📈 Analysis Summary")
-    st.info("🔄 **Real-time Analysis Complete!** Re-run the analysis anytime to check for new issues.")
     
     # Show analysis timestamp
     import datetime
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.caption(f"� Analysis completed at: {current_time}")
+    st.caption(f"Last analyzed: {current_time}")
+    
+    # Final summary based on findings (only for bug cases)
+    if len(actual_bugs) > 0:
+        total_issues = len(actual_bugs)
+        critical_count = len(critical_issues) if 'critical_issues' in locals() else 0
+        high_count = len(high_severity) if 'high_severity' in locals() else 0
+        
+        if critical_count > 0:
+            st.error(f"🚨 **{total_issues} security issues detected** - {critical_count} critical, requires immediate attention!")
+        elif high_count > 0:
+            st.warning(f"⚠️ **{total_issues} security issues detected** - {high_count} high priority, should be addressed soon.")
+        else:
+            st.info(f"ℹ️ **{total_issues} minor issues detected** - Low priority improvements recommended.")
 
-    # --- PDF Export ---
-    def create_pdf(dataframe, score):
-        buffer = BytesIO()
-        c = canvas.Canvas(buffer, pagesize=letter)
-        c.setFont("Helvetica-Bold", 16)
-        c.drawString(200, 770, "Website Bug Report")
+# --- PDF Generation ---
+def generate_pdf_report(df, url):
+    """Generate a PDF report of the bug analysis"""
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    # Header
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(50, height - 50, "Website Security Analysis Report")
+    c.setFont("Helvetica", 12)
+    c.drawString(50, height - 80, f"URL: {url}")
+    c.drawString(50, height - 100, f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Report content
+    y_position = height - 140
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(50, y_position, "Findings Summary:")
+    
+    y_position -= 30
+    c.setFont("Helvetica", 10)
+    
+    for index, row in df.iterrows():
+        if y_position < 100:  # New page if needed
+            c.showPage()
+            y_position = height - 50
+        
+        severity_color = "RED" if row["Severity"] in ["Critical", "High"] else "ORANGE" if row["Severity"] == "Medium" else "BLACK"
+        c.drawString(50, y_position, f"• {row['Category']}: {row['Message']} [{row['Severity']}]")
+        y_position -= 20
+    
+    c.save()
+    buffer.seek(0)
+    return buffer
 
-        c.setFont("Helvetica", 12)
-        c.drawString(50, 740, f"Health Score: {score}/100")
-
-        y = 700
-        for _, row in dataframe.iterrows():
-            text = f"{row['Category']} | {row['Message']} | Severity: {row['Severity']}"
-            c.drawString(50, y, text[:90])
-            y -= 20
-            if y < 50:  # new page
-                c.showPage()
-                y = 750
-        c.save()
-        buffer.seek(0)
-        return buffer
-
-    pdf_buffer = create_pdf(df, score)
-    st.download_button(
-        "📄 Download PDF Report",
-        data=pdf_buffer,
-        file_name="bug_report.pdf",
-        mime="application/pdf"
-    )
+# Auto-refresh functionality
+if refresh:
+    import time
+    time.sleep(60)  # Wait 60 seconds
+    st.rerun()

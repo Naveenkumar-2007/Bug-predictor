@@ -161,6 +161,58 @@ class FirebaseAuth:
             }
         return None
 
+    def sign_in_with_google(self) -> Tuple[bool, str]:
+        """
+        Initiate Google OAuth sign-in
+        
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        if not FIREBASE_AVAILABLE:
+            return False, "Firebase not available"
+            
+        try:
+            # For Streamlit apps, we'll use a simplified Google auth approach
+            # Create a button that opens Google OAuth in a new tab
+            google_auth_url = f"https://accounts.google.com/oauth/authorize?" \
+                            f"client_id=your-google-client-id&" \
+                            f"redirect_uri=http://localhost:8503&" \
+                            f"response_type=code&" \
+                            f"scope=email profile openid&" \
+                            f"access_type=offline"
+                            
+            return True, google_auth_url
+            
+        except Exception as e:
+            return False, f"Google sign-in error: {str(e)}"
+
+    def create_google_user_session(self, email: str, name: str) -> bool:
+        """
+        Create a user session for Google-authenticated users
+        
+        Args:
+            email: User's email from Google
+            name: User's display name from Google
+            
+        Returns:
+            bool: Success status
+        """
+        try:
+            # Create mock user data for Google authentication
+            google_user = {
+                'idToken': f'google_token_{hash(email)}',
+                'email': email,
+                'localId': f'google_{hash(email)}',
+                'kind': 'google_user'
+            }
+            
+            self._store_user_session(google_user, name)
+            return True
+            
+        except Exception as e:
+            st.error(f"Error creating Google user session: {str(e)}")
+            return False
+
     def reset_password(self, email: str) -> Tuple[bool, str]:
         """
         Send password reset email
